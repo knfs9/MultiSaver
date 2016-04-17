@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">MultiSaver</string>
+    <string name="uploadPhotoButton">Upload photo</string>
 </resources>
