@@ -19,8 +19,8 @@ import java.util.Map;
  */
 public class ListFolderTask extends AsyncTask<String, Void, Map<String, String>> {
     private final Context context;
-    private final DropboxAPI dropboxAPI;
-
+    private static DropboxAPI dropboxAPI;
+    public boolean isDir;
     public ListFolderTask(Context context, DropboxAPI dropboxAPI){
         this.dropboxAPI = dropboxAPI;
         this.context = context;
@@ -46,6 +46,5 @@ public class ListFolderTask extends AsyncTask<String, Void, Map<String, String>>
         }
         return null;
     }
-
 
 }

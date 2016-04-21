@@ -7,52 +7,48 @@ import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Build;
+import android.support.annotation.BoolRes;
 import android.support.v4.app.FragmentActivity;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.ExpandableListView;
 import android.widget.ImageView;
 import android.widget.ListView;
-import android.widget.SimpleExpandableListAdapter;
+
+import android.widget.Toast;
 
 import com.dropbox.client2.DropboxAPI;
 import com.dropbox.client2.android.AndroidAuthSession;
+import com.dropbox.client2.exception.DropboxException;
 import com.dropbox.client2.session.AccessTokenPair;
 import com.dropbox.client2.session.AppKeyPair;
-import com.dropbox.client2.session.Session;
+
 import com.dropbox.client2.session.TokenPair;
-import com.dropbox.core.DbxRequestConfig;
-import com.dropbox.core.v1.DbxClientV1;
-import com.dropbox.core.v1.DbxEntry;
-import com.dropbox.core.v2.DbxClientV2;
-import com.dropbox.core.v2.files.ListFolderResult;
+
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
-import javax.xml.parsers.DocumentBuilderFactory;
+
 
 import app.course.gdg.multisaver.Utils.Constants;
 import app.course.gdg.multisaver.tasks.ListFolderTask;
-import app.course.gdg.multisaver.tasks.ListFolderTaskV1;
+
 import app.course.gdg.multisaver.tasks.UploadTask;
 
 
 public class DbxActivity extends Activity implements View.OnClickListener {
-
 
     private static final int PICK_IMAGE_FROM_GALLERY = 0;
 
@@ -60,10 +56,16 @@ public class DbxActivity extends Activity implements View.OnClickListener {
     private ImageView mImageView;
     private Button uploadButton;
     private Button showFoldersButton;
-    EditText editText;
+    private EditText editText;
+    private ListView listView;
 
-    private DbxRequestConfig config;
+    private StringBuilder currPath = new StringBuilder("/");
+
+
     private DropboxAPI<AndroidAuthSession> dropboxAPI;
+    private boolean isLoggedIn;
+    private Button loginButton;
+
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -74,26 +76,38 @@ public class DbxActivity extends Activity implements View.OnClickListener {
 
         uploadButton = (Button) findViewById(R.id.uploadPhotoButton);
         showFoldersButton = (Button) findViewById(R.id.showFoldersButton);
-        editText = (EditText) findViewById(R.id.textView);
+        loginButton = (Button) findViewById(R.id.login_button);
+        loginButton.setOnClickListener(this);
 
         showFoldersButton.setOnClickListener(this);
-
         uploadButton.setOnClickListener(this);
 
 
-        config = new DbxRequestConfig(Constants.DROPBOX_NAME, Locale.getDefault().toString());
-        ListView listView = (ListView)findViewById(R.id.listView1);
+        listView = (ListView)findViewById(R.id.listView1);
+        listView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            @Override
+            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                String item = (String)listView.getItemAtPosition(position);
+                String path = concatPath(item);
+                try {
+                    boolean isDir = new FileHelper().execute(path).get();
+                    if(!isDir) {
+                        cutPath(item);
+                        return;
+                    }
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                } catch (ExecutionException e) {
+                    e.printStackTrace();
+                }
 
-//        Map map = getRootFolder("/");
-//
-//        ArrayAdapter<String> adapter2 = new ArrayAdapter<String>(this,	android.R.layout.simple_list_item_1, new ArrayList<String>(map.keySet()));
-//        Intent intent = getIntent();
-//        String login = intent.getStringExtra("login");
-//        System.out.println(login);
-//        listView.setAdapter(adapter2);
-    }
+                Map<String, String> map = getRootFolder(path);
+                ArrayAdapter<String> adapter2 = new ArrayAdapter(parent.getContext(),android.R.layout.simple_list_item_1, new ArrayList<String>(map.keySet()));
+                listView.setAdapter(adapter2);
+            }
+        });
+        loggedIn(false);
 
-    private void login(){
         AppKeyPair appKeyPair = new AppKeyPair(Constants.APP_KEY, Constants.APP_KEY_SEC);
         AndroidAuthSession session;
 
@@ -108,6 +122,33 @@ public class DbxActivity extends Activity implements View.OnClickListener {
             session = new AndroidAuthSession(appKeyPair);
         }
         dropboxAPI = new DropboxAPI(session);
+
+//        Map map = getRootFolder("/");
+//
+//        ArrayAdapter<String> adapter2 = new ArrayAdapter<String>(this,	android.R.layout.simple_list_item_1, new ArrayList<String>(map.keySet()));
+//        Intent intent = getIntent();
+//        String login = intent.getStringExtra("login");
+//        System.out.println(login);
+//        listView.setAdapter(adapter2);
+    }
+
+    private String concatPath(String str){
+        return currPath.append(str + "/").toString();
+    }
+
+    private String cutPath(String str){
+        //// TODO: 21.04.2016 add cutpath functionality
+        //String str1 = currPath.
+        return str;
+    }
+
+
+    private void loggedIn(boolean isLoggedIn){
+        this.isLoggedIn = isLoggedIn;
+        uploadButton.setEnabled(isLoggedIn);
+        showFoldersButton.setEnabled(isLoggedIn);
+        loginButton.setVisibility(isLoggedIn ? View.GONE : View.VISIBLE);
+
     }
 
     //Restore image after device rotation
@@ -132,8 +173,24 @@ public class DbxActivity extends Activity implements View.OnClickListener {
     @Override
     protected void onResume() {
         super.onResume();
+        AndroidAuthSession session = dropboxAPI.getSession();
 
-
+        if(session.authenticationSuccessful()){
+            try {
+                session.finishAuthentication();
+                TokenPair tokens = session.getAccessTokenPair();
+                AppKeyPair tk = session.getAppKeyPair();
+                SharedPreferences prefs = getSharedPreferences(Constants.DROPBOX_NAME, 0);
+                SharedPreferences.Editor editor = prefs.edit();
+                editor.putString(Constants.APP_KEY, tk.key);
+                editor.putString(Constants.APP_KEY_SEC, tk.secret);
+                editor.commit();
+                loggedIn(true);
+            }catch (IllegalStateException e){
+                Toast.makeText(this, "Error during Dropbox authentification",
+                        Toast.LENGTH_SHORT).show();
+            }
+        }
     }
 
     @Override
@@ -143,10 +200,14 @@ public class DbxActivity extends Activity implements View.OnClickListener {
                 openGallery();
                 break;
             case R.id.showFoldersButton:
-                //editText.setText(cloud.getRootFolder(""));
-                Map map = getRootFolder("");
-                System.out.println(map.toString());
+                Map map = getRootFolder(currPath.toString());
+                ArrayAdapter<String> adapter2 = new ArrayAdapter(this,	android.R.layout.simple_list_item_1, new ArrayList<String>(map.keySet()));
+                listView.setAdapter(adapter2);
                 break;
+            case R.id.login_button :
+                dropboxAPI.getSession().startOAuth2Authentication(this);
+                break;
+
 
         }
     }
@@ -212,6 +273,20 @@ public class DbxActivity extends Activity implements View.OnClickListener {
     @TargetApi(Build.VERSION_CODES.KITKAT)
     public void uploadFile(String file) throws IOException{
         new UploadTask(this, dropboxAPI).execute(file);
+    }
+
+    class FileHelper extends AsyncTask<String, Void, Boolean>{
+
+        @Override
+        protected Boolean doInBackground(String... params) {
+            try {
+                DropboxAPI.Entry dir = dropboxAPI.metadata(params[0], 1000, null, true, null);
+                return dir.isDir;
+            } catch (DropboxException e) {
+                e.printStackTrace();
+            }
+            return false;
+        }
     }
 
 }
